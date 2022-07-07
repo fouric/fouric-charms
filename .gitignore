@@ -1,0 +1,4 @@
+src/*.fasl
+*.swp
+.#*
+fouric-charms.txt

@@ -38,5 +38,7 @@
    #:+up+ #:+down+ #:+left+ #:+right+
    #:+resize+
    #:+c-a+ #:+c-b+ #:+c-c+ #:+c-d+ #:+c-e+ #:+c-f+ #:+c-g+ #:+c-h/backspace+ #:+c-i+ #:+c-j+ #:+c-k+ #:+c-l+ #:+c-m+ #:+c-n+ #:+c-o+ #:+c-p+ #:+c-q+ #:+c-r+ #:+c-s+ #:+c-t+ #:+c-u+ #:+c-v+ #:+c-w+ #:+c-x+ #:+c-y+ #:+c-z+
-   #:+delete+ #:+escape+ #:+newline+ #:+pageup+ #:+pagedown+ #:+home+ #:+end+ #:+insert+
+   #:+delete+ #:+escape+ #:+newline+ #:+pageup+ #:+pagedown+ #:+home+ #:+end+ #:+insert+ #:+backspace+
+
+   #:playground
    ))

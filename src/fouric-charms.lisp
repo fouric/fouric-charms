@@ -63,6 +63,7 @@
 (defparameter +home+ #\latin_capital_letter_c_with_acute)
 (defparameter +end+ #\latin_capital_letter_u_with_tilde)
 (defparameter +insert+ #\latin_small_letter_eng)
+(defparameter +backspace+ #\latin_small_letter_c_with_acute) ;; when extra chars turned on, we can differentiate between C-h and backspace
 
 ;; formerly charms-handle
 (defclass terminal-handle ()

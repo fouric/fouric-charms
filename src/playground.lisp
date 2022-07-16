@@ -26,6 +26,11 @@
 ;; RENDERPAINT assumes that the w and h fields of all widgets involved are correct and up to date
 (f:ft renderpaint (widget integer integer) f:nothing)
 (defgeneric renderpaint (widget x y)) ;; x and y are offsets FROM THE CORNER OF THE SCREEN
+(f:ft handle-chord (widget (f:optional character)) (f:just symbol))
+(defgeneric handle-chord (widget chord))
+;; default implementation: don't handle
+(defmethod handle-chord ((widget widget) chord)
+  :propagate)
 
 (f:ft add-child (widget widget) f:nothing)
 (defgeneric add-child (parent child))
@@ -49,7 +54,7 @@
 ;; might be a special case - just draws children at position offsets, doesn't do any layout, stacks them on top of each other
 ;; only for debugging!
 (defclass plane (widget)
-  ((children :accessor children :initform nil)))
+  ((child-bindings :accessor child-bindings :initform nil))) ;; each child-binding is ((x . y) . child-widget)
 (defun make-plane (&optional parent children)
   (let ((instance (make-instance 'plane)))
     (when parent
@@ -57,21 +62,27 @@
     (dolist (child children)
       (add-child instance child))
     (values instance)))
-(defmethod add-child ((parent plane) child)
-  (setf (widget.parent child) parent)
-  (push child (children parent))
+(defmethod children ((plane plane))
+  (mapcar #'cddr (child-bindings plane)))
+(defun add-plane-child (plane child x y)
+  (setf (widget.parent child) plane)
+  (push (cons (cons x y) child) (child-bindings plane))
   (values))
+(defun remove-plane-child (plane child)
+  (delete child (child-bindings plane) :key #'cddr))
 (defmethod layout ((plane plane))
   (values (w plane) (h plane)))
 ;; x and y are ABSOLUTE offsets from corner
 (defmethod renderpaint ((plane plane) x y)
-  (dolist (child (children plane))
-    ;; we have to give the child its offsets because it doesn't know those because it doesn't do its own layout!
-    (renderpaint child (+ (x child) x) (+ (y child) y))))
+  (dolist (binding (child-bindings plane))
+    (destructuring-bind ((child-x . child-y) . child)
+        binding
+      ;; we have to give the child its offsets because it doesn't know those because it doesn't do its own layout!
+      (renderpaint child (+ child-x x) (+ child-y y)))))
 
 
 (defclass vstack (widget)
-  ((children :accessor children :initform nil)))
+  ((child-bindings :accessor child-bindings :initform nil))) ;; why not CHILDREN? because the members of this list aren't going to be children, but (layout . child) cons cells
 (defun make-vstack (&optional parent children)
   (let ((instance (make-instance 'vstack)))
     (when parent
@@ -79,8 +90,18 @@
     (dolist (child (reverse children))
       (add-child instance child))
     (values instance)))
+(defmethod children ((vstack vstack))
+  (mapcar #'cdr (child-bindings vstack)))
 (defmethod add-child ((parent vstack) child)
-  (push child (children parent))
+  (vstack-add-child parent child :top)
+  (values))
+(f:ft vstack-add-child (vstack widget &optional symbol) f:nothing)
+(defun vstack-add-child (vstack child &optional (position :top))
+  (assert (member position '(:top :bottom)))
+  (setf (widget.parent child) vstack)
+  ;; each child binding is a cons cell of (position . child)
+  ;; need to push to END of list
+  (setf (child-bindings vstack) (append (child-bindings vstack) (list (cons position child))))
   (values))
 (defmethod layout ((vstack vstack))
   (let ((w 0)
@@ -99,70 +120,96 @@
       (renderpaint child x (+ y y*))
       (incf y* (h child)))))
 
-(defclass textline (widget)
-  ((content :accessor textline.content :initarg :content :initform "")))
-(f:ft make-textline (string &optional (f:optional widget) integer integer) (f:just textline))
-(defun make-textline (content &optional (parent nil))
-  (let ((instance (make-instance 'textline :content content)))
+(defclass label (widget)
+  ((content :reader content :initarg :content :initform "")))
+(f:ft make-label (string &optional (f:optional widget)) (f:just label))
+(defun make-label (content &optional (parent nil))
+  (let ((instance (make-instance 'label :content content)))
     (when parent
       (add-child parent instance))
     (values instance)))
-(defmethod layout ((widget textline))
-  (let ((w (length (textline.content widget)))
+(defmethod layout ((widget label))
+  (let ((w (length (content widget)))
         (h 1))
     (setf (w widget) w
           (h widget) h)
     (values w h)))
 ;; if no "rendering" needs to happen, do a no-op
-;;(defmethod render ((widget textline)))
-(defmethod renderpaint ((widget textline) x y)
-  (fouric-charms:draw-string (textline.content widget) x y))
+;;(defmethod render ((widget label)))
+(defmethod renderpaint ((widget label) x y)
+  (fouric-charms:draw-string (content widget) x y))
+(defmethod children ((label label))
+  nil)
 
-(defun frame-function (stack)
-  (let* (#++(root (getf data :root-widget))
-         (textline (first (children stack))))
-    (with-slots (x y) textline
+;; mutable label
+(defclass textline (label)
+  ())
+;; the CONTENT slot only had a reader for the label class, but we're going to define a setf expander that redoes layout
+(defmethod (setf content) (value (line textline))
+  (setf (slot-value line 'content) value
+        (widget.dirty? line) t)
+  (layout line))
+(f:ft make-textline (string &optional (f:optional widget)) textline)
+(defun make-textline (content &optional parent)
+  (let ((instance (make-instance 'textline :content content)))
+    (when parent
+      (add-child parent instance))
+    instance))
+;; inherit layout, renderpaint, children too
+(defmethod handle-chord ((line textline) chord)
+  (cond
+    ;; unnecessary?
+    ((null chord)
+     :propagate)
+    ((eq chord +backspace+)
+     (symbol-macrolet ((content (content line)))
+       (unless (string= content "")
+         (setf content (subseq content 0 (1- (length content)))))
+       :stop))
+    ((<= (char-code #\space) (char-code chord) (char-code #\tilde))
+     ;; ascii character - append
+     (setf (content line) (concatenate 'string (content line) (coerce (list chord) 'string)))
+     :stop)
+    (t
+     :propagate)))
+
+(defun frame-function (root)
+  (let* ((stack1 (first (children root))))
+    (with-slots (x y) stack1
       (f:update-swank)
-      (f:when-case (char (get-char))
-        (#\j (incf y))
-        (#\k (decf y))
-        (#\h (decf x))
-        (#\l (incf x))
-        (#\i (setf *invert* (not *invert*)))
-        (#\q
-         (print 'returning)
-         (return-from frame-function nil))
-        (#\b
-         (break))
-        (+resize+
-         ;; refresh here
-         )
-        ((nil)
-         t)
-        (t
-         (format t "got other char ~s~%" char)
-         ))
+      (let ((char (get-char)))
+        (when char
+          (cond
+            ((eq char +c-q+)
+             (print 'returning)
+             (return-from frame-function nil))
+            ((eq char +c-b+)
+             (break))
+            #++(+resize+
+                ;; refresh here
+                )
+            (t
+             (format t "result of HANDLE-CHORD is ~s~%" (handle-chord root char))
+             (format t "got other char ~s~%" char)
+             ))))
 
       (clear-window)
 
-      (layout stack)
-      (renderpaint stack 0 0)
+      (layout root)
+      (renderpaint root 0 0)
 
       (refresh-window)
-      t)))
+      t))
 
-(defun playground ()
-  (with-charms (:timeout 1000 :raw-input t :interpret-control-characters nil)
-    (let* (#++(root (make-instance 'plane))
-           #++(data `(:root-widget ,root))
-           (textline1 (make-textline "hello!"))
-           (textline2 (make-textline "world!"))
-           (textline3 (make-textline "no cap"))
-           #++(stack (make-vstack :children (list textline1 textline2)))
-           (stack2a (make-vstack nil (list textline1 textline2)))
-           (stack2b (make-vstack nil (list textline3)))
-           (stack (make-vstack nil (list stack2a stack2b))))
-      ;;(set-xy textline2 0 1)
-      (loop :named main-loop :do
-        (unless (frame-function stack)
-          (return-from main-loop))))))
+  (defun playground ()
+    (with-charms (:timeout 1000 :raw-input t :interpret-control-characters nil)
+      (let* (#++(label1 (make-label "hello!"))
+             #++(label2 (make-label "world!"))
+             #++(label3 (make-label "no cap"))
+             #++(stack1 (make-vstack nil (list label1 label2)))
+             #++(stack2 (make-vstack nil (list label3)))
+             #++(root (make-vstack nil (list stack1 stack2)))
+             (root (make-textline "sup?")))
+        (loop :named main-loop :do
+          (unless (frame-function root)
+            (return-from main-loop)))))))
